@@ -34,16 +34,31 @@ class MailboxBridge extends EventEmitter {
   }
 
   start() {
-    const beat = () => {
-      const file = path.join(this.dir, 'app.json');
-      fs.promises
-        .writeFile(`${file}.tmp`, JSON.stringify({ heartbeat: Math.floor(Date.now() / 1000), pid: process.pid }))
+    const file = path.join(this.dir, 'app.json');
+    const payload = () => JSON.stringify({ heartbeat: Math.floor(Date.now() / 1000), pid: process.pid });
+    try {
+      // The first beat is synchronous so a bridge script started right now already sees the app.
+      fs.writeFileSync(`${file}.tmp`, payload());
+      fs.renameSync(`${file}.tmp`, file);
+    } catch {
+      /* retried by the interval below */
+    }
+    this.heartbeat = setInterval(() => {
+      fsp
+        .writeFile(`${file}.tmp`, payload())
         .then(() => fsp.rename(`${file}.tmp`, file))
         .catch(() => {});
-    };
-    beat();
-    this.heartbeat = setInterval(beat, 5000);
+    }, 5000);
     if (this.heartbeat.unref) this.heartbeat.unref();
+  }
+
+  /** Lets the bridge script start this app when the user runs it from Resolve's Scripts menu. */
+  writeLaunchInfo(exe, args) {
+    try {
+      fs.writeFileSync(path.join(this.dir, 'launch.json'), JSON.stringify({ exe, args }));
+    } catch {
+      /* optional convenience */
+    }
   }
 
   async _readJson(name) {
