@@ -1,0 +1,10 @@
+node_modules/
+# Blackmagic's proprietary bridge module is copied from the local Resolve install by the installer.
+plugin/WorkflowIntegration.node
+# Optional pre-seeded OAuth client (never commit real credentials).
+plugin/credentials.json
+client_secret*.json
+test-results/
+*.log
+.DS_Store
+Thumbs.db

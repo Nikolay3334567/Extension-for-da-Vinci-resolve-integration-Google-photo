@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BlackmagicDesign>
+    <Plugin>
+        <Id>com.cloudpool.resolve.googlephotos</Id>
+        <Name>Cloud Pool (Google Photos)</Name>
+        <Version>1.0.0</Version>
+        <Description>Browse Google Photos and Google Drive, stream previews and send clips straight to the Media Pool and timeline.</Description>
+        <FilePath>main.js</FilePath>
+    </Plugin>
+</BlackmagicDesign>
