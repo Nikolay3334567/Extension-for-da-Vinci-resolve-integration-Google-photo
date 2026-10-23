@@ -5,8 +5,8 @@ import { icon } from './icons.js';
 import { t } from './i18n.js';
 import { state } from './state.js';
 import { call } from './api.js';
-import { toast } from './toast.js';
 import { sourcePicker } from './onboarding.js';
+import { showError } from './errors.js';
 
 export class SettingsDialog {
   constructor(root, hooks) {
@@ -42,7 +42,7 @@ export class SettingsDialog {
     try {
       state.settings = await call('settings:set', patch);
     } catch (err) {
-      toast(t('toast.error', { message: err.message }), { level: 'error' });
+      showError(err);
     }
   }
 

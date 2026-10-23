@@ -5,7 +5,7 @@ import { icon } from './icons.js';
 import { t } from './i18n.js';
 import { state } from './state.js';
 import { call } from './api.js';
-import { toast } from './toast.js';
+import { showError } from './errors.js';
 
 const GUIDE_URL = 'https://github.com/Nikolay3334567/Extension-for-da-Vinci-resolve-integration-Google-photo/blob/HEAD/docs/GOOGLE_SETUP.md';
 
@@ -77,7 +77,7 @@ export class Onboarding {
           this.editingClient = false;
           this.render();
         } catch (err) {
-          toast(err.message, { level: 'error' });
+          showError(err);
         }
       };
       step1.append(
@@ -95,7 +95,7 @@ export class Onboarding {
                     this.render();
                   }
                 } catch (err) {
-                  toast(err.message, { level: 'error' });
+                  showError(err);
                 }
               },
             },
@@ -115,7 +115,7 @@ export class Onboarding {
           this.editingClient = false;
           this.render();
         } catch (err) {
-          toast(err.message, { level: 'error' });
+          showError(err);
         }
       };
     }
@@ -135,7 +135,7 @@ export class Onboarding {
               try {
                 state.auth = await call('auth:signIn');
               } catch (err) {
-                if (!/cancel/i.test(err.message)) toast(err.message, { level: 'error' });
+                if (!/cancel/i.test(err.message)) showError(err);
               }
             },
           },

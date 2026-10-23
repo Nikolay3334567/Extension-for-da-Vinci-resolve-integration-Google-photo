@@ -12,6 +12,7 @@ import { SettingsDialog } from './settings.js';
 import { Onboarding } from './onboarding.js';
 import { toast } from './toast.js';
 import { showMenu, closeMenu } from './menu.js';
+import { showError, explain } from './errors.js';
 
 const $ = (sel) => document.querySelector(sel);
 const appendAll = (node, ...children) => node.append(...children.filter((c) => c != null && c !== false));
@@ -450,7 +451,16 @@ function renderEmpty(items) {
     return;
   }
   if (v.source === 'drive' && state.drive.error) {
-    ui.empty.append(el('div.empty-box', el('div.empty-icon', { html: icon('alert') }), el('p', t('misc.error', { message: state.drive.error }))));
+    const why = explain(state.drive.error);
+    ui.empty.append(
+      el(
+        'div.empty-box',
+        el('div.empty-icon', { html: icon('alert') }),
+        el('p', why.text),
+        why.link ? el('button.btn', { on: { click: () => call('app:openExternal', { url: why.link }) } }, el('span', { html: icon('external') }), 'Google Cloud') : null,
+        el('button.btn', { on: { click: () => loadDrive(true) } }, el('span', { html: icon('refresh') }), t('act.retry')),
+      ),
+    );
     return;
   }
   if (items.length) return;
@@ -479,7 +489,7 @@ async function loadPhotos() {
     const items = await call('photos:list');
     state.photos = new Map(items.map((i) => [i.key, i]));
   } catch (err) {
-    toast(t('toast.error', { message: err.message }), { level: 'error' });
+    showError(err);
   }
   renderSidebar();
 }
@@ -547,7 +557,7 @@ async function pick() {
   try {
     state.picker = await call('photos:pick');
   } catch (err) {
-    toast(t('toast.error', { message: err.message }), { level: 'error' });
+    showError(err);
   }
   if (state.view.source !== 'photos') setSource('photos');
   renderBanner();
@@ -631,7 +641,7 @@ function handleEvent({ type, payload }) {
         toast(payload.updated ? t('picker.done', { added: payload.added || 0, updated: payload.updated }) : t('picker.added', { n: payload.added || 0 }), { level: 'ok' });
         window.focus();
       } else if (payload.state === 'timeout') toast(t('picker.timeout'), { level: 'warn' });
-      else if (payload.state === 'error') toast(t('toast.error', { message: payload.error }), { level: 'error' });
+      else if (payload.state === 'error') showError(payload.error);
       break;
     }
     case 'photos': {
@@ -726,7 +736,7 @@ function jobFinished(job) {
     toast(msg, { level: 'ok', timeout: 3500 });
   } else if (job.state === 'error') {
     if (job.errorCode === 'NO_RESOLVE' || job.errorCode === 'BRIDGE_OFFLINE') toast(t('toast.noResolve'), { level: 'warn', timeout: 9000 });
-    else toast(t('toast.error', { message: job.error }), { level: 'error', timeout: 9000 });
+    else showError(job.error);
   }
 }
 
@@ -787,7 +797,7 @@ async function runAction(action, keys) {
         break;
     }
   } catch (err) {
-    toast(t('toast.error', { message: err.message }), { level: 'error' });
+    showError(err);
   }
 }
 
