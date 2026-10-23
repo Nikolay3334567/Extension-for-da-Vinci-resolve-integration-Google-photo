@@ -11,7 +11,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { FakeGoogle } = require('../support/fake-google');
 const { hasFfmpeg, video } = require('../support/fixtures');
-const { tmpDir, browserOpen, quiet } = require('../support/helpers');
+const { tmpDir, browserOpen, quiet, waitFor } = require('../support/helpers');
 
 const ffmpeg = hasFfmpeg();
 
@@ -37,8 +37,8 @@ function longVideo() {
   return video('long-60s-720p.mp4', { width: 1280, height: 720, fps: 30, seconds: 60, gop: 30 });
 }
 
-async function setup(driveItems, fakeOptions = {}) {
-  const fake = new FakeGoogle({ drive: driveItems }, fakeOptions);
+async function setup(fixtures, fakeOptions = {}) {
+  const fake = new FakeGoogle(fixtures, fakeOptions);
   await fake.start();
   process.env.CLOUDPOOL_GOOGLE_BASE = fake.base;
   const { CloudPoolCore } = require('../../plugin/src/main/core');
@@ -83,7 +83,7 @@ function filesUnder(dir) {
 
 test('long video: In/Out fetches only the fragment, frame-accurately', { skip: !ffmpeg && 'ffmpeg not installed', timeout: 120000 }, async () => {
   const long = longVideo();
-  const s = await setup([{ id: 'long', name: 'GX010042.MP4', mimeType: 'video/mp4', createdTime: '2026-10-01T10:00:00Z', file: long.file, durationMillis: 60000 }]);
+  const s = await setup({ drive: [{ id: 'long', name: 'GX010042.MP4', mimeType: 'video/mp4', createdTime: '2026-10-01T10:00:00Z', file: long.file, durationMillis: 60000 }] });
   try {
     const marks = { 'drive:long': { in: 30.4, out: 34.0 } };
     const job = s.core.sendToResolve({ keys: ['drive:long'], action: 'append', marks });
@@ -125,10 +125,33 @@ test('long video: In/Out fetches only the fragment, frame-accurately', { skip: !
   }
 });
 
+test('Google Photos video: the duration is read from the stream, then only the fragment is fetched', { skip: !ffmpeg && 'ffmpeg not installed', timeout: 120000 }, async () => {
+  const long = longVideo();
+  // Google Photos reports no duration: it comes from probing the MP4 index over Range.
+  const s = await setup({ photos: [{ id: 'p1', filename: 'PXL_20261001_101500.mp4', mimeType: 'video/mp4', type: 'VIDEO', createTime: '2026-10-01T10:15:00Z', width: 1280, height: 720, file: long.file }] });
+  try {
+    s.core.updateSettings({ autoDownloadVideos: false });
+    const picked = waitFor(s.core.photos, 'picked');
+    await s.core.photos.startPicking();
+    await picked;
+    const job = s.core.sendToResolve({ keys: ['photos:p1'], action: 'append', marks: { 'photos:p1': { in: 40, out: 42 } } });
+    const done = await finished(s.core, job.id);
+    assert.equal(done.state, 'done', done.error);
+    assert.equal(done.entries[0].segment, true, 'fragment mode was used');
+    const clip = s.placed[0].clips[0];
+    assert.match(path.basename(clip.path), /^PXL_20261001_101500 \[00-40_00-42\]\.mp4$/);
+    assert.ok(Math.abs(40 - clip.inSec - 39) < 0.02, `fragment starts at ${40 - clip.inSec}`);
+    assert.equal(frameHash(clip.path, clip.inSec), frameHash(long.file, 40));
+    assert.ok(s.fake.bytesSent < fs.statSync(long.file).size * 0.3, `transferred ${s.fake.bytesSent} bytes`);
+  } finally {
+    await s.close();
+  }
+});
+
 test('cancelling a job stops the fragment download and leaves no partial file', { skip: !ffmpeg && 'ffmpeg not installed', timeout: 60000 }, async () => {
   const long = longVideo();
   // ~256 KB/s per connection: the fragment takes many seconds, plenty of time to cancel.
-  const s = await setup([{ id: 'long', name: 'GX010043.MP4', mimeType: 'video/mp4', createdTime: '2026-10-01T10:00:00Z', file: long.file, durationMillis: 60000 }], { throttleBytesPerSec: 256 * 1024 });
+  const s = await setup({ drive: [{ id: 'long', name: 'GX010043.MP4', mimeType: 'video/mp4', createdTime: '2026-10-01T10:00:00Z', file: long.file, durationMillis: 60000 }] }, { throttleBytesPerSec: 256 * 1024 });
   try {
     const job = s.core.sendToResolve({ keys: ['drive:long'], action: 'append', marks: { 'drive:long': { in: 20, out: 30 } } });
     const result = finished(s.core, job.id);
@@ -153,7 +176,7 @@ test('cancelling a job stops the fragment download and leaves no partial file', 
 
 test('short clips and unmarked clips still download the whole file', { skip: !ffmpeg && 'ffmpeg not installed' }, async () => {
   const short = video('short-8s.mp4', { seconds: 8 });
-  const s = await setup([{ id: 'short', name: 'short.mp4', mimeType: 'video/mp4', createdTime: '2026-10-01T10:00:00Z', file: short.file, durationMillis: 8000 }]);
+  const s = await setup({ drive: [{ id: 'short', name: 'short.mp4', mimeType: 'video/mp4', createdTime: '2026-10-01T10:00:00Z', file: short.file, durationMillis: 8000 }] });
   try {
     assert.equal(await s.core.ensureSegment('drive:short', { inSec: 2, outSec: 4 }), null);
   } finally {
