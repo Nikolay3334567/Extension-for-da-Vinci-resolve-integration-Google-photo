@@ -761,7 +761,11 @@ async function runAction(action, keys) {
         if (usable.length < keys.length) toast(t('tile.expired'), { level: 'warn' });
         if (!usable.length) return;
         const marks = {};
-        for (const k of usable) if (state.marks[k]) marks[k] = state.marks[k];
+        for (const k of usable) {
+          if (!state.marks[k]) continue;
+          const it = getItem(k);
+          marks[k] = { ...state.marks[k], duration: it && it.durationMs ? it.durationMs / 1000 : null };
+        }
         await call('resolve:send', { keys: usable, action, marks });
         const waiting = usable.filter((k) => !isLocal(k)).length;
         if (waiting) toast(t('toast.downloading', { n: waiting }), { timeout: 3500 });

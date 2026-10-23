@@ -57,6 +57,8 @@ const DEFAULT_SETTINGS = {
   sources: ['photos', 'drive'],
   pinned: false,
   switchToEditPage: false,
+  segmentDownloads: true, // long videos with In/Out: fetch only the marked part (needs ffmpeg)
+  ffmpegPath: '',
   window: null,
 };
 

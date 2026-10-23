@@ -16,10 +16,11 @@ class ResolveJobs extends EventEmitter {
    * @param {(key: string) => object} opts.describe     { name, kind, fps, comment, source }
    * @param {() => object} opts.options                 { binName, driveBinName, switchToEdit }
    */
-  constructor({ getBridge, ensureLocal, describe, options, logger = console }) {
+  constructor({ getBridge, ensureLocal, ensureSegment = null, describe, options, logger = console }) {
     super();
     this.getBridge = getBridge;
     this.ensureLocal = ensureLocal;
+    this.ensureSegment = ensureSegment;
     this.describe = describe;
     this.options = options;
     this.logger = logger;
@@ -36,7 +37,7 @@ class ResolveJobs extends EventEmitter {
       error: job.error,
       errorCode: job.errorCode,
       result: job.result,
-      entries: job.entries.map((e) => ({ key: e.key, name: e.name, state: e.state, error: e.error })),
+      entries: job.entries.map((e) => ({ key: e.key, name: e.name, state: e.state, error: e.error, segment: !!e.segment, progress: e.progress ?? null })),
     };
   }
 
@@ -62,6 +63,7 @@ class ResolveJobs extends EventEmitter {
       errorCode: null,
       result: null,
       canceled: false,
+      abort: new AbortController(), // stops fragment extraction on cancel
       entries: keys.map((key) => {
         const info = this.describe(key) || {};
         const mark = marks[key] || {};
@@ -80,7 +82,7 @@ class ResolveJobs extends EventEmitter {
     };
     // Downloads start right away, even while an earlier job is still being placed.
     for (const entry of job.entries) {
-      entry.promise = this.ensureLocal(entry.key).then(
+      entry.promise = this._fetch(job, entry, marks[entry.key] || {}).then(
         (p) => {
           entry.path = p;
           if (entry.state === 'downloading') entry.state = 'ready';
@@ -103,10 +105,43 @@ class ResolveJobs extends EventEmitter {
     return this.snapshot(job);
   }
 
+  /** Local path for an entry: just the marked fragment when possible, else the whole file. */
+  async _fetch(job, entry, mark) {
+    if (this.ensureSegment && (entry.inSec != null || entry.outSec != null)) {
+      let lastEmit = 0;
+      try {
+        const seg = await this.ensureSegment(entry.key, {
+          inSec: entry.inSec,
+          outSec: entry.outSec,
+          durationHint: mark.duration,
+          signal: job.abort.signal,
+          onProgress: (p) => {
+            entry.progress = p;
+            if (Date.now() - lastEmit > 300) {
+              lastEmit = Date.now();
+              this._emit(job);
+            }
+          },
+        });
+        if (seg) {
+          entry.segment = true;
+          entry.offset = seg.offset || 0;
+          return seg.path;
+        }
+      } catch (err) {
+        if (job.canceled) throw Object.assign(new Error('Cancelled'), { code: 'CANCELED' });
+        this.logger.warn(`[jobs] fragment extraction failed, downloading the whole file: ${err.message}`);
+      }
+      entry.progress = null;
+    }
+    return this.ensureLocal(entry.key);
+  }
+
   cancel(id) {
     const job = this.jobs.find((j) => j.id === id);
     if (!job || job.state === 'done' || job.state === 'error') return;
     job.canceled = true;
+    job.abort.abort();
     if (job.state === 'queued') {
       job.state = 'canceled';
       this._emit(job);
@@ -141,8 +176,8 @@ class ResolveJobs extends EventEmitter {
       kind: info.kind,
       fps: info.fps || null,
       comment: info.comment || null,
-      inSec: entry.inSec,
-      outSec: entry.outSec,
+      inSec: entry.inSec != null && entry.offset ? Math.max(0, entry.inSec - entry.offset) : entry.inSec,
+      outSec: entry.outSec != null && entry.offset ? Math.max(0, entry.outSec - entry.offset) : entry.outSec,
     };
   }
 

@@ -111,6 +111,8 @@ export class DownloadsPanel {
     if (job.state === 'running' || job.state === 'queued') {
       const done = job.entries.filter((e) => e.state !== 'downloading').length;
       meta = t('job.waiting', { done, total: n });
+      const seg = job.entries.find((e) => e.state === 'downloading' && e.progress != null);
+      if (seg) meta += ` · ${t('job.fragment', { p: Math.round(seg.progress * 100) })}`;
     } else if (job.state === 'done' && job.result) {
       meta = job.action === 'import' ? t('job.imported', { n: job.result.imported + job.result.reused }) : t('job.placed', { n: job.result.placed, timeline: job.result.timeline || '' });
     } else if (job.state === 'error') {

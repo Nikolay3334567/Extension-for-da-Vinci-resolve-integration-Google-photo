@@ -222,6 +222,15 @@ function registerIpc() {
       if (r.canceled || !r.filePaths[0]) return core.settings;
       return core.updateSettings({ downloadDir: r.filePaths[0] });
     },
+    'settings:chooseFfmpeg': async () => {
+      const r = await dialog.showOpenDialog(win, { title: 'ffmpeg', properties: ['openFile', 'showHiddenFiles'] });
+      if (r.canceled || !r.filePaths[0]) return core.settings;
+      return core.updateSettings({ ffmpegPath: r.filePaths[0] });
+    },
+    'ffmpeg:status': async ({ refresh }) => {
+      const found = await core.ffmpeg.detect({ refresh: !!refresh });
+      return found ? { found: true, path: found.ffmpeg, version: found.version } : { found: false };
+    },
     'cache:stats': () => core.cacheStats(),
     'cache:clear': () => core.clearCache(),
   };

@@ -7,6 +7,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
+const { Transform } = require('stream');
 const { URL } = require('url');
 
 function b64url(buf) {
@@ -414,8 +415,18 @@ class FakeGoogle {
     const stream = fs.createReadStream(file, { start, end, highWaterMark: 64 * 1024 });
     const rate = this.options.throttleBytesPerSec;
     if (!rate) {
-      stream.pipe(res);
-      res.on('close', () => stream.destroy());
+      // Count what is actually handed to the socket (respecting backpressure).
+      const counter = new Transform({
+        transform: (chunk, _enc, cb) => {
+          this.bytesSent = (this.bytesSent || 0) + chunk.length;
+          cb(null, chunk);
+        },
+      });
+      stream.pipe(counter).pipe(res);
+      res.on('close', () => {
+        stream.destroy();
+        counter.destroy();
+      });
       return;
     }
     // Throttled delivery to emulate per-connection bandwidth limits.
@@ -425,6 +436,7 @@ class FakeGoogle {
     stream.on('data', (chunk) => {
       stream.pause();
       sent += chunk.length;
+      this.bytesSent = (this.bytesSent || 0) + chunk.length;
       res.write(chunk);
       const due = startedAt + (sent / rate) * 1000;
       setTimeout(() => stream.resume(), Math.max(0, due - Date.now()));

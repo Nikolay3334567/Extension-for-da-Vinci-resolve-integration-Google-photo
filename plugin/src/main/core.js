@@ -23,9 +23,10 @@ const { ResolveJobs } = require('./jobs');
 const { WorkflowBridge } = require('./resolve/workflow-bridge');
 const { MailboxBridge } = require('./resolve/mailbox-bridge');
 const { probeMp4, cachedReader } = require('./mp4');
+const { FfmpegTools } = require('./ffmpeg');
 const { publicItem, splitKey } = require('./items');
 const { readBody, parseContentRange } = require('./http');
-const { sanitizeFilename, throttle, isAbortError } = require('./util');
+const { sanitizeFilename, throttle, isAbortError, uniquePath } = require('./util');
 
 function localDay(iso) {
   const d = iso ? new Date(iso) : new Date();
@@ -94,15 +95,18 @@ class CloudPoolCore extends EventEmitter {
     this.isPlugin = this.workflow.load();
     this.mailbox = this.isPlugin ? null : new MailboxBridge({ dir: path.join(ud, 'resolve-bridge'), logger: this.logger });
     this.resolveStatus = { connected: false, via: this.isPlugin ? 'workflow' : 'mailbox' };
+    this.ffmpeg = new FfmpegTools({ getConfiguredPath: () => this.settings.ffmpegPath, logger: this.logger });
     this.jobs = new ResolveJobs({
       getBridge: () => (this.isPlugin ? this.workflow : this.mailbox),
       ensureLocal: (key) => this.ensureLocal(key),
+      ensureSegment: (key, opts) => this.ensureSegment(key, opts),
       describe: (key) => this._describe(key),
       options: () => this.settings,
       logger: this.logger,
     });
 
     this.probing = { queue: [], active: 0, failed: new Set(), pending: new Set() };
+    this.probeInfo = new Map(); // key -> full probe result (incl. keyframe times), memory only
     this._wireEvents();
   }
 
@@ -141,7 +145,10 @@ class CloudPoolCore extends EventEmitter {
     this.photos.on('items', ({ upsert, remove }) => {
       this._emit('photos', { upsert: (upsert || []).map((i) => this.publicItem(i)), remove: remove || [] });
     });
-    this.photos.on('picked', ({ added, updated }) => this._autoDownload([...added, ...updated]));
+    this.photos.on('picked', ({ added, updated }) => {
+      this._prefetchThumbs([...added, ...updated]);
+      this._autoDownload([...added, ...updated]);
+    });
     // Videos that Google was still processing become downloadable once they are READY.
     this.photos.on('items', ({ upsert }) => {
       for (const item of upsert || []) {
@@ -235,6 +242,16 @@ class CloudPoolCore extends EventEmitter {
     });
   }
 
+  /**
+   * Google Photos links expire, so cache a grid-sized thumbnail for every picked item while
+   * they are fresh (on-screen thumbnails are still served first: the queue is newest-first).
+   */
+  _prefetchThumbs(items) {
+    for (const item of items.slice(0, 2000)) {
+      this.thumbs.get(item, 384).catch(() => {});
+    }
+  }
+
   _autoDownload(items) {
     const s = this.settings;
     for (const item of items) {
@@ -264,6 +281,55 @@ class CloudPoolCore extends EventEmitter {
     const item = await this.sources.resolve(key);
     this._enqueue(item, URGENT);
     return this.downloads.whenDone(key);
+  }
+
+  /**
+   * Long video with In/Out marks: cut only the marked part (plus a little handle) from the
+   * cloud with ffmpeg. Returns { path, offset } — offset is where the file starts in the
+   * original — or null when the whole file should be downloaded instead.
+   */
+  async ensureSegment(key, { inSec = null, outSec = null, durationHint = null, onProgress = null, signal = null } = {}) {
+    if (!this.settings.segmentDownloads) return null;
+    const existing = this.localPath(key);
+    if (existing && fs.existsSync(existing)) return null;
+    const item = await this.sources.resolve(key);
+    if (item.kind !== 'video') return null;
+    if (!item.durationMs && item.source === 'photos') await this._probeOne(key).catch(() => {});
+    const duration = (item.durationMs || 0) / 1000 || Number(durationHint) || 0;
+    if (!duration) return null;
+    const a = Math.max(0, inSec || 0);
+    const b = Math.min(duration, outSec != null ? outSec : duration);
+    if (duration < 45 || b - a > duration * 0.6) return null; // not worth it: fetch the whole file
+    // The same marks sent again (e.g. after an undo in Resolve) reuse the fragment already cut.
+    const segments = this.localStore.data.segments || (this.localStore.data.segments = {});
+    const cacheKey = `${key}|${a.toFixed(3)}|${b.toFixed(3)}`;
+    if (segments[cacheKey] && fs.existsSync(segments[cacheKey].path)) return segments[cacheKey];
+    const dl = this.downloads.get(key);
+    if (dl && dl.total && dl.received / dl.total > 0.4) return null; // the full download is nearly there
+    if (!(await this.ffmpeg.detect())) return null;
+    const url = `${this.mediaBase}/stream/${encodeURIComponent(key)}`;
+    // Keyframe positions come from the file's index (one small Range read); ffprobe is the fallback.
+    if (!this.probeInfo.has(key)) await this._probeOne(key).catch(() => {});
+    const keyframes = this.probeInfo.has(key) && this.probeInfo.get(key).video ? this.probeInfo.get(key).video.keyframes : null;
+    const target = Math.max(0, a - 0.5);
+    const start = keyframes && keyframes.length
+      ? keyframes.reduce((best, t) => (t <= target + 1e-6 && t > best ? t : best), 0)
+      : await this.ffmpeg.keyframeBefore(url, target, { signal });
+    const length = Math.min(duration, b + 1) - start;
+    const p2 = (n) => String(Math.floor(n)).padStart(2, '0');
+    const stamp = (t) => `${t >= 3600 ? `${Math.floor(t / 3600)}-` : ''}${p2((t % 3600) / 60)}-${p2(t % 60)}`;
+    const base = this.sources.downloadName(item).replace(/\.[^.]+$/, '');
+    const dir = this._targetDir(item);
+    fs.mkdirSync(dir, { recursive: true });
+    // Google Photos streams are MP4 transcodes; MOV originals stay MOV (e.g. PCM audio has no MP4 tag).
+    const ext = item.source === 'drive' && /\.mov$/i.test(item.name) ? '.mov' : '.mp4';
+    const dest = uniquePath(dir, sanitizeFilename(`${base} [${stamp(a)}_${stamp(b)}]${ext}`));
+    await this.ffmpeg.extract({ url, start, duration: length, dest, onProgress, signal });
+    this.logger.info(`[segment] ${item.name}: ${a.toFixed(2)}–${b.toFixed(2)} s → ${path.basename(dest)} (from ${start.toFixed(3)} s)`);
+    for (const [k, v] of Object.entries(segments)) if (!fs.existsSync(v.path)) delete segments[k];
+    segments[cacheKey] = { path: dest, offset: start };
+    this.localStore.saveSoon();
+    return segments[cacheKey];
   }
 
   _onDownloaded(s) {
@@ -339,8 +405,8 @@ class CloudPoolCore extends EventEmitter {
   async _probeOne(key) {
     const local = this.localPath(key);
     if (local && fs.existsSync(local)) return this._probeLocal(key, local);
-    const item = this.sources.peek(key);
-    if (!item || !this.photos.isReachable(item)) throw new Error('unreachable');
+    const item = this.sources.peek(key) || (await this.sources.resolve(key));
+    if (!item || (item.source === 'photos' && !this.photos.isReachable(item))) throw new Error('unreachable');
     let size = null;
     const read = async (offset, length) => {
       const end = size ? Math.min(size, offset + length) - 1 : offset + length - 1;
@@ -379,12 +445,14 @@ class CloudPoolCore extends EventEmitter {
   }
 
   _applyProbe(key, info) {
+    this.probeInfo.set(key, info);
+    if (this.probeInfo.size > 200) this.probeInfo.delete(this.probeInfo.keys().next().value);
     const patch = {};
     if (info.durationSec) patch.durationMs = Math.round(info.durationSec * 1000);
     if (info.video && info.video.fps) patch.fps = info.video.fps;
     if (info.video && info.video.codec) patch.codec = info.video.codec;
     const parts = splitKey(key);
-    if (parts.source === 'photos') this.photos.setMeta(parts.id, patch);
+    if (parts.source === 'photos' && Object.keys(patch).length) this.photos.setMeta(parts.id, patch);
     const local = this.localStore.data.items[key];
     if (local) {
       Object.assign(local, patch);
@@ -418,6 +486,7 @@ class CloudPoolCore extends EventEmitter {
     this.downloads.setLimits({ maxActive: s.maxParallelDownloads, connections: s.connectionsPerDownload });
     this.thumbs.maxBytes = s.thumbCacheMB * 1024 * 1024;
     if (patch && patch.downloadDir) this.downloads.dir = path.join(s.downloadDir, '.incoming');
+    if (patch && 'ffmpegPath' in patch) this.ffmpeg.found = undefined; // look again on next use
     this._emit('settings', s);
     return s;
   }

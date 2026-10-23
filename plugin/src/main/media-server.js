@@ -10,8 +10,12 @@
 
 const fs = require('fs');
 const http = require('http');
-const { randomToken, isAbortError, mimeForFile } = require('./util');
+const { randomToken, isAbortError, mimeForFile, abortError } = require('./util');
 const { sniffImageType } = require('./thumbs');
+const { parseContentRange, isTransientError } = require('./http');
+
+const FIRST_CHUNK = 1024 * 1024;
+const MAX_CHUNK = 16 * 1024 * 1024;
 
 const PASS_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag'];
 
@@ -158,6 +162,11 @@ class MediaServer {
       return;
     }
     const item = await this.resolveItem(key);
+    const open = /^bytes=(\d+)-$/.exec(String(req.headers.range || 'bytes=0-').trim());
+    if (open && req.method === 'GET') {
+      await this._streamChunked(res, item, Number(open[1]), signal, !!req.headers.range);
+      return;
+    }
     const upstream = await this.openStream(item, { range: req.headers.range || null, signal });
     const headers = { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' };
     for (const h of PASS_HEADERS) if (upstream.headers[h]) headers[h] = upstream.headers[h];
@@ -170,6 +179,99 @@ class MediaServer {
     }
     upstream.on('error', () => res.destroy());
     upstream.pipe(res);
+  }
+
+  /**
+   * Players and ffmpeg ask for "bytes=N-" and simply hang up when they seek. Passing that on to
+   * Google would keep pulling data nobody reads, so the response is assembled from upstream
+   * chunks that grow (1 MB → 16 MB) while the client keeps reading; a seek wastes at most one.
+   */
+  async _streamChunked(res, item, start, signal, partial) {
+    // Nothing of a chunk has been sent when it is opened, so a reused keep-alive socket that
+    // Google already closed (ECONNRESET) is simply retried instead of breaking playback.
+    const open = async (from, to) => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await this.openStream(item, { range: `bytes=${from}-${to}`, signal });
+        } catch (err) {
+          if (attempt >= 2 || signal.aborted || !isTransientError(err)) throw err;
+          await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+        }
+      }
+    };
+    let chunk = FIRST_CHUNK;
+    let upstream = await open(start, start + chunk - 1);
+    const cr = parseContentRange(upstream.headers['content-range']);
+    if (upstream.statusCode !== 206 || !cr || cr.total == null || cr.start !== start) {
+      // The source ignores ranges (or answered differently): pass it through untouched.
+      const headers = { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' };
+      for (const h of PASS_HEADERS) if (upstream.headers[h]) headers[h] = upstream.headers[h];
+      if (!headers['content-type'] || /octet-stream/.test(headers['content-type'])) headers['content-type'] = item.mimeType;
+      res.writeHead(upstream.statusCode, headers);
+      upstream.on('error', () => res.destroy());
+      upstream.pipe(res);
+      return;
+    }
+    const total = cr.total;
+    let type = upstream.headers['content-type'];
+    if (!type || /octet-stream/.test(type)) type = item.mimeType;
+    const headers = {
+      'Content-Type': type,
+      'Content-Length': total - start,
+      'Accept-Ranges': 'bytes',
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'no-store',
+    };
+    if (partial) headers['Content-Range'] = `bytes ${start}-${total - 1}/${total}`;
+    res.writeHead(partial ? 206 : 200, headers);
+    const pump = (src, expected) =>
+      new Promise((resolve, reject) => {
+        let got = 0;
+        const onData = (d) => {
+          got += d.length;
+        };
+        const cleanup = () => {
+          res.off('close', onClose);
+          src.off('data', onData);
+          src.off('end', onEnd);
+          src.off('error', onError);
+        };
+        const onClose = () => {
+          cleanup();
+          src.destroy();
+          reject(abortError());
+        };
+        const onEnd = () => {
+          cleanup();
+          // A short chunk must not shift the rest of the file: break the response instead.
+          if (got === expected) resolve();
+          else reject(new Error(`upstream chunk ended after ${got} of ${expected} bytes`));
+        };
+        const onError = (err) => {
+          cleanup();
+          reject(err);
+        };
+        res.on('close', onClose);
+        src.on('end', onEnd);
+        src.on('error', onError);
+        src.pipe(res, { end: false });
+        src.on('data', onData);
+      });
+    let pos = start;
+    for (;;) {
+      const range = parseContentRange(upstream.headers['content-range']);
+      if (upstream.statusCode !== 206 || !range || range.start !== pos) {
+        upstream.destroy();
+        res.destroy();
+        return;
+      }
+      await pump(upstream, range.end - range.start + 1);
+      pos = range.end + 1;
+      if (pos >= total || signal.aborted) break;
+      chunk = Math.min(MAX_CHUNK, chunk * 2);
+      upstream = await open(pos, Math.min(total, pos + chunk) - 1);
+    }
+    res.end();
   }
 
   _serveFile(req, res, file) {

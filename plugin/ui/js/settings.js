@@ -29,6 +29,7 @@ export class SettingsDialog {
   async open() {
     this.root.classList.add('open');
     this.render();
+    this.refreshFfmpeg();
     try {
       const stats = await call('cache:stats');
       const node = this.root.querySelector('.cache-size');
@@ -36,6 +37,15 @@ export class SettingsDialog {
     } catch {
       /* ignore */
     }
+  }
+
+  refreshFfmpeg() {
+    call('ffmpeg:status', { refresh: true })
+      .then((f) => {
+        const node = this.root.querySelector('.ffmpeg-status');
+        if (node) node.textContent = f.found ? t('st.ffmpegFound', { path: f.path, version: f.version || '' }) : t('st.ffmpegMissing');
+      })
+      .catch(() => {});
   }
 
   async set(patch) {
@@ -110,6 +120,31 @@ export class SettingsDialog {
       el('p.muted', state.mode === 'plugin' ? t('st.mode.plugin') : t('st.mode.standalone')),
       el('div.st-grid', text('binName', t('st.bin')), text('driveBinName', t('st.binDrive'))),
       check('switchToEditPage', t('st.editPage')),
+      check('segmentDownloads', t('st.segments')),
+      el(
+        'div.st-row',
+        el('span.muted.small.ffmpeg-status', '…'),
+        el('button.btn.small', {
+          on: {
+            click: async () => {
+              state.settings = await call('settings:chooseFfmpeg');
+              this.render();
+              this.refreshFfmpeg();
+            },
+          },
+        }, t('st.ffmpegChoose')),
+        s.ffmpegPath
+          ? el('button.btn.small', {
+              on: {
+                click: async () => {
+                  await this.set({ ffmpegPath: '' });
+                  this.render();
+                  this.refreshFfmpeg();
+                },
+              },
+            }, t('st.ffmpegAuto'))
+          : null,
+      ),
       state.mode === 'standalone'
         ? el(
             'div.st-row',

@@ -172,6 +172,10 @@ async function main() {
     await page.click('.drawer .drawer-header .icon-btn');
     await page.click('[data-nav="settings"]');
     await page.waitForSelector('.dialog');
+    if (spawnSync('ffmpeg', ['-version']).status === 0) {
+      // The fragment option reports the ffmpeg it found.
+      await waitFor(async () => /ffmpeg (найден|found): /.test(await page.textContent('.ffmpeg-status')), { label: 'ffmpeg status' });
+    }
     await shot('10-settings');
     await page.keyboard.press('Escape');
 

@@ -53,7 +53,80 @@ function parseMvhd(buf, box) {
   return { timescale: buf.readUInt32BE(box.start + 12), duration: buf.readUInt32BE(box.start + 16) };
 }
 
-function parseTrak(buf, trak) {
+function readEditStart(buf, trak, movieTimescale, mediaTimescale) {
+  // Returns { mediaTime, emptySec }: the media time shown at presentation 0 and any initial gap.
+  const edts = child(buf, trak, 'edts');
+  const elst = edts && child(buf, edts, 'elst');
+  if (!elst) return { mediaTime: 0, emptySec: 0 };
+  const v = buf[elst.start];
+  const count = buf.readUInt32BE(elst.start + 4);
+  let off = elst.start + 8;
+  let emptySec = 0;
+  for (let i = 0; i < count && off < elst.end; i++) {
+    const dur = v === 1 ? Number(buf.readBigUInt64BE(off)) : buf.readUInt32BE(off);
+    const mediaTime = v === 1 ? Number(buf.readBigInt64BE(off + 8)) : buf.readInt32BE(off + 4);
+    off += v === 1 ? 20 : 12;
+    if (mediaTime === -1) {
+      emptySec += movieTimescale ? dur / movieTimescale : 0;
+      continue;
+    }
+    return { mediaTime, emptySec };
+  }
+  return { mediaTime: 0, emptySec };
+}
+
+/** Presentation times (seconds) of the sync samples (keyframes) of a video track. */
+function keyframeTimes(buf, stbl, timescale, edit, limit = 200000) {
+  const stts = child(buf, stbl, 'stts');
+  if (!stts || !timescale) return null;
+  const stss = child(buf, stbl, 'stss');
+  const ctts = child(buf, stbl, 'ctts');
+  const sync = [];
+  if (stss) {
+    const n = buf.readUInt32BE(stss.start + 4);
+    for (let i = 0; i < n && stss.start + 8 + i * 4 + 4 <= stss.end && sync.length < limit; i++) sync.push(buf.readUInt32BE(stss.start + 8 + i * 4));
+  }
+  const cttsVersion = ctts ? buf[ctts.start] : 0;
+  const cttsCount = ctts ? buf.readUInt32BE(ctts.start + 4) : 0;
+  let cIdx = 0;
+  let cLeft = cttsCount ? buf.readUInt32BE(ctts.start + 8) : 0;
+  const cOff = () => {
+    if (!cttsCount || cIdx >= cttsCount) return 0;
+    const at = ctts.start + 12 + cIdx * 8;
+    return cttsVersion === 1 ? buf.readInt32BE(at) : buf.readUInt32BE(at);
+  };
+  const out = [];
+  const sttsCount = buf.readUInt32BE(stts.start + 4);
+  let sample = 1;
+  let dts = 0;
+  let next = 0; // index into sync[]
+  for (let e = 0; e < sttsCount; e++) {
+    const at = stts.start + 8 + e * 8;
+    if (at + 8 > stts.end) break;
+    const count = buf.readUInt32BE(at);
+    const delta = buf.readUInt32BE(at + 4);
+    for (let k = 0; k < count; k++) {
+      const isSync = stss ? sync[next] === sample : true;
+      if (isSync) {
+        out.push((dts + cOff() - edit.mediaTime) / timescale + edit.emptySec);
+        next++;
+        if (out.length >= limit || (stss && next >= sync.length)) return out;
+      }
+      dts += delta;
+      sample++;
+      if (cttsCount) {
+        cLeft--;
+        while (cLeft <= 0 && cIdx < cttsCount - 1) {
+          cIdx++;
+          cLeft = buf.readUInt32BE(ctts.start + 8 + cIdx * 8);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function parseTrak(buf, trak, movieTimescale) {
   const mdia = child(buf, trak, 'mdia');
   if (!mdia) return null;
   const hdlr = child(buf, mdia, 'hdlr');
@@ -77,6 +150,7 @@ function parseTrak(buf, trak) {
         out.sampleRate = buf.readUInt32BE(entry + 32) >>> 16;
       }
     }
+    if (handler === 'vide') out.keyframes = keyframeTimes(buf, stbl, timescale, readEditStart(buf, trak, movieTimescale, timescale));
     const stts = child(buf, stbl, 'stts');
     if (stts) {
       const count = buf.readUInt32BE(stts.start + 4);
@@ -118,12 +192,14 @@ function parseMoov(moovBuf) {
   const moov = { start: 0, end: moovBuf.length };
   const mvhdBox = child(moovBuf, moov, 'mvhd');
   const result = { durationSec: null, video: null, audio: null };
+  let movieTimescale = 0;
   if (mvhdBox) {
     const { timescale, duration } = parseMvhd(moovBuf, mvhdBox);
+    movieTimescale = timescale;
     if (timescale) result.durationSec = duration / timescale;
   }
   for (const trak of readBoxes(moovBuf, 0, moovBuf.length).filter((b) => b.type === 'trak')) {
-    const t = parseTrak(moovBuf, trak);
+    const t = parseTrak(moovBuf, trak, movieTimescale);
     if (!t) continue;
     if (t.handler === 'vide' && !result.video) {
       const seconds = t.timescale ? t.duration / t.timescale : 0;
@@ -139,6 +215,7 @@ function parseMoov(moovBuf) {
         fps: snapRate(fps),
         frames: t.samples || null,
         durationSec: seconds || null,
+        keyframes: t.keyframes || null,
       };
       if (!result.durationSec && seconds) result.durationSec = seconds;
     } else if (t.handler === 'soun' && !result.audio) {

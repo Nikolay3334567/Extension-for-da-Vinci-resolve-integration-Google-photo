@@ -169,3 +169,76 @@ test('mp4 probe reads duration and frame rate over HTTP ranges', { skip: !ffmpeg
     await s.fake.stop();
   }
 });
+
+test('open-ended ranges are served from growing upstream chunks and stop when the client hangs up', async () => {
+  const big = randomFile('stream-12m.bin', 12 * 1024 * 1024);
+  const s = await stack();
+  try {
+    s.fake.fixtures.drive.push({ id: 'big', name: 'big.mp4', mimeType: 'video/mp4', createdTime: '2026-10-19T10:00:00Z', file: big });
+    // Full read through the chunked path is byte-identical.
+    const full = await get(`${s.base}/stream/${encodeURIComponent('drive:big')}`, { Range: 'bytes=0-' });
+    assert.equal(full.status, 206);
+    assert.equal(full.headers['content-range'], `bytes 0-${12 * 1024 * 1024 - 1}/${12 * 1024 * 1024}`);
+    assert.ok(full.body.equals(fs.readFileSync(big)));
+    // (The metadata lookup hits the same path without a Range.)
+    const chunks = s.fake
+      .requests(/\/files\/big$/)
+      .map((r) => r.range)
+      .filter(Boolean);
+    assert.deepEqual(chunks.slice(0, 3), ['bytes=0-1048575', 'bytes=1048576-3145727', 'bytes=3145728-7340031']);
+
+    // A player that seeks away after a few KB costs at most the first chunk.
+    s.fake.bytesSent = 0;
+    const res = await request(`${s.base}/stream/${encodeURIComponent('drive:big')}`, { headers: { Range: 'bytes=4194304-' } });
+    assert.equal(res.statusCode, 206);
+    await new Promise((resolve) => {
+      res.once('data', () => {
+        res.destroy();
+        resolve();
+      });
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(s.fake.bytesSent <= 1024 * 1024, `upstream sent ${s.fake.bytesSent} bytes`);
+
+    // Requests without Range get a plain 200.
+    const plain = await get(`${s.base}/stream/${encodeURIComponent('drive:big')}`);
+    assert.equal(plain.status, 200);
+    assert.equal(plain.body.length, 12 * 1024 * 1024);
+  } finally {
+    s.server.stop();
+    await s.fake.stop();
+  }
+});
+
+test('a dropped connection between chunks is retried; a persistent failure breaks the response', async () => {
+  const big = randomFile('stream-12m.bin', 12 * 1024 * 1024);
+  const s = await stack();
+  try {
+    s.fake.fixtures.drive.push({ id: 'big', name: 'big.mp4', mimeType: 'video/mp4', createdTime: '2026-10-19T10:00:00Z', file: big });
+    const url = `${s.base}/stream/${encodeURIComponent('drive:big')}`;
+    // Injects the fault once the first chunk is flowing, so it hits the next chunk's request.
+    const read = (onFirstData) =>
+      request(url, { headers: { Range: 'bytes=0-' } }).then(
+        (res) =>
+          new Promise((resolve) => {
+            const parts = [];
+            const done = (ok) => resolve({ ok, body: Buffer.concat(parts) });
+            res.once('data', onFirstData);
+            res.on('data', (d) => parts.push(d));
+            res.on('end', () => done(true));
+            res.on('error', () => done(false));
+            res.on('aborted', () => done(false));
+          }),
+      );
+    const once = await read(() => s.fake.fail(/\/files\/big/, 'drop', 1));
+    assert.equal(once.ok, true);
+    assert.ok(once.body.equals(fs.readFileSync(big)), 'retried chunk keeps the bytes intact');
+
+    const always = await read(() => s.fake.fail(/\/files\/big/, 'drop', 10));
+    assert.equal(always.ok, false, 'the client sees an error, not a silently short file');
+    assert.ok(always.body.length < 12 * 1024 * 1024);
+  } finally {
+    s.server.stop();
+    await s.fake.stop();
+  }
+});

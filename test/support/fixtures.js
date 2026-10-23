@@ -36,7 +36,7 @@ function md5(file) {
 /**
  * Videos: { file, width, height, fps, seconds }. `faststart` puts the moov box first.
  */
-function video(name, { width = 640, height = 360, fps = 30, seconds = 4, hue = 0, faststart = false } = {}) {
+function video(name, { width = 640, height = 360, fps = 30, seconds = 4, hue = 0, faststart = false, gop = fps } = {}) {
   fs.mkdirSync(DIR, { recursive: true });
   const file = path.join(DIR, name);
   if (!fs.existsSync(file)) {
@@ -45,7 +45,7 @@ function video(name, { width = 640, height = 360, fps = 30, seconds = 4, hue = 0
       '-f', 'lavfi', '-i', 'sine=frequency=330:sample_rate=48000',
       '-t', String(seconds),
       '-vf', `hue=h=${hue}`,
-      '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-g', String(fps),
+      '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-g', String(gop), '-keyint_min', String(gop), '-sc_threshold', '0',
       '-c:a', 'aac', '-shortest',
       ...(faststart ? ['-movflags', '+faststart'] : []),
       file,
