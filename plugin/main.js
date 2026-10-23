@@ -295,6 +295,8 @@ if (!app.requestSingleInstanceLock()) {
       if (win && !win.isDestroyed()) win.webContents.send('cp:event', ev);
     });
     core.on('resolve-quit', () => app.quit());
+    // The user just pressed "Done" in the browser: bring Cloud Pool back to the front.
+    core.photos.on('picked', () => focusWindow());
     if (!core.isPlugin) {
       const exe = shortPath(process.execPath);
       core.mailbox.writeLaunchInfo(exe, app.isPackaged ? [] : [shortPath(app.getAppPath())]);

@@ -1757,6 +1757,13 @@ select {
   margin-bottom: 8px;
 }
 
+.ob-sources {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
 .ob-warn {
   color: var(--warn) !important;
 }

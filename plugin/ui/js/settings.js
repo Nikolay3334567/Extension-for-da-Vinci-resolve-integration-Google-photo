@@ -6,6 +6,7 @@ import { t } from './i18n.js';
 import { state } from './state.js';
 import { call } from './api.js';
 import { toast } from './toast.js';
+import { sourcePicker } from './onboarding.js';
 
 export class SettingsDialog {
   constructor(root, hooks) {
@@ -76,6 +77,8 @@ export class SettingsDialog {
             el('button.btn', { on: { click: async () => { await call('auth:signOut'); this.close(); } } }, el('span', { html: icon('logout') }), t('st.signOut')),
           )
         : el('div.st-row', el('button.btn.primary', { on: { click: () => { this.close(); this.hooks.onSignIn(); } } }, t('st.signIn'))),
+      sourcePicker(),
+      el('p.muted.small', t('st.sourcesNote')),
       el(
         'div.st-row.muted',
         el('span', `${t('st.client')}: ${auth.clientId ? `${auth.clientId.slice(0, 18)}…` : '—'}`),

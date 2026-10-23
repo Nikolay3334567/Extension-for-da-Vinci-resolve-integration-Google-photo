@@ -4,6 +4,5 @@
   "version": "1.0.0",
   "description": "DaVinci Resolve Workflow Integration: a cloud media pool for Google Photos and Google Drive.",
   "main": "main.js",
-  "license": "MIT",
   "private": true
 }

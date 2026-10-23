@@ -860,18 +860,20 @@ function onKey(e) {
     return handled();
   }
   if (settings.isOpen) return;
-  if (mod && key.toLowerCase() === 'a') {
+  // Letter shortcuts use the physical key (e.code), so they also work with Cyrillic layouts.
+  const code = e.code || '';
+  if (mod && code === 'KeyA') {
     for (const it of grid.items) if (it.kind !== 'folder') state.selection.add(it.key);
     grid.refreshSelection();
     renderSelbar();
     return handled();
   }
-  if (mod && key.toLowerCase() === 'f') {
+  if (mod && code === 'KeyF') {
     const s = ui.toolbar.querySelector('.search');
     if (s) s.focus();
     return handled();
   }
-  if (mod && key.toLowerCase() === 'i') {
+  if (mod && code === 'KeyI') {
     if (sel.length) runAction('import', sel);
     return handled();
   }
@@ -916,16 +918,16 @@ function onKey(e) {
     default:
       break;
   }
-  const k = key.toLowerCase();
-  if (k === 'd' && sel.length) return runAction('download', sel), handled();
+  if (code === 'KeyD' && sel.length) return runAction('download', sel), handled();
   if (!pv) return;
-  if (k === 'i') return preview.markIn(), handled();
-  if (k === 'o') return preview.markOut(), handled();
-  if (k === 'j') return preview.shuttleBackward(), handled();
-  if (k === 'k') return preview.stop(), handled();
-  if (k === 'l') return preview.shuttleForward(), handled();
-  if (k === 'm') return preview.toggleMute(), handled();
-  if (k === 'x' && e.altKey) return preview.clearMarks(), handled();
+  if (code === 'KeyX' && e.altKey) return preview.clearMarks(), handled();
+  if (e.altKey) return;
+  if (code === 'KeyI') return preview.markIn(), handled();
+  if (code === 'KeyO') return preview.markOut(), handled();
+  if (code === 'KeyJ') return preview.shuttleBackward(), handled();
+  if (code === 'KeyK') return preview.stop(), handled();
+  if (code === 'KeyL') return preview.shuttleForward(), handled();
+  if (code === 'KeyM') return preview.toggleMute(), handled();
 }
 
 window.addEventListener('blur', closeMenu);

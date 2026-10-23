@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "description": "Cloud Pool — Google Photos & Google Drive media browser for DaVinci Resolve (Workflow Integration plugin + standalone app).",
-  "license": "MIT",
   "scripts": {
     "start": "electron plugin",
     "test": "node --test --test-timeout=60000 \"test/unit/*.test.js\"",

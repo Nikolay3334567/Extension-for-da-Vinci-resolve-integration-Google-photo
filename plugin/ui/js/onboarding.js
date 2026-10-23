@@ -7,7 +7,34 @@ import { state } from './state.js';
 import { call } from './api.js';
 import { toast } from './toast.js';
 
-const GUIDE_URL = 'https://github.com/Nikolay3334567/Extension-for-da-Vinci-resolve-integration-Google-photo/blob/main/docs/GOOGLE_SETUP.md';
+const GUIDE_URL = 'https://github.com/Nikolay3334567/Extension-for-da-Vinci-resolve-integration-Google-photo/blob/HEAD/docs/GOOGLE_SETUP.md';
+
+/** Which Google services to request access to (applies at the next sign-in). */
+export function sourcePicker() {
+  const sources = new Set(state.settings.sources || ['photos', 'drive']);
+  const box = (id, label) =>
+    el(
+      'label.check',
+      el('input', {
+        type: 'checkbox',
+        checked: sources.has(id),
+        on: {
+          change: async (e) => {
+            if (e.target.checked) sources.add(id);
+            else sources.delete(id);
+            if (!sources.size) {
+              sources.add(id);
+              e.target.checked = true;
+              return;
+            }
+            state.settings = await call('settings:set', { sources: [...sources] });
+          },
+        },
+      }),
+      el('span', label),
+    );
+  return el('div.ob-sources', el('span.muted', `${t('ob.sources')}:`), box('photos', t('src.photos')), box('drive', t('src.drive')));
+}
 
 export class Onboarding {
   constructor(root) {
@@ -96,6 +123,7 @@ export class Onboarding {
     const step2 = el('section.ob-step', { class: clientReady ? 'active' : 'locked' }, el('h3', el('span.ob-num', '2'), t('ob.step2')));
     if (auth.lastError === 'expired') step2.append(el('p.ob-warn', t('ob.expired')));
     step2.append(el('p', t('ob.step2Text')));
+    step2.append(sourcePicker());
     if (auth.signingIn) {
       step2.append(el('div.ob-row', el('span.spinner'), el('span', t('ob.signingIn')), el('button.btn.small', { on: { click: () => call('auth:cancelSignIn') } }, t('act.cancel'))));
     } else {
