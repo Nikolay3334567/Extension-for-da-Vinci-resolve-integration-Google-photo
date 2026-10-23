@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: System packages (ffmpeg for fixtures, LuaJIT for the Resolve bridge, Xvfb for Electron)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg luajit xvfb
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      - name: Unit tests
+        run: npm test
+      - name: End-to-end test (Electron)
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: test-results/

@@ -6,8 +6,7 @@
   "scripts": {
     "start": "electron plugin",
     "test": "node --test --test-timeout=60000 \"test/unit/*.test.js\"",
-    "test:e2e": "node test/e2e/run.js",
-    "check": "node scripts/check-syntax.js"
+    "test:e2e": "node test/e2e/run.js"
   },
   "engines": {
     "node": ">=20"

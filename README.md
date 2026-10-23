@@ -51,11 +51,11 @@ Google Фото (то, что телефон сам туда выгружает)
 
 ## Требования
 
-| | DaVinci Resolve **Studio** (macOS, Windows) | DaVinci Resolve (бесплатная), Linux |
-|---|---|---|
-| Как запускается | как плагин: *Workspace ▸ Workflow Integrations ▸ Cloud Pool* | отдельное окно + скрипт *Workspace ▸ Scripts ▸ Cloud Pool* |
-| Что нужно установить | только этот плагин | [Node.js LTS](https://nodejs.org) (для первого запуска) |
-| Вставка на таймлайн | кнопки, горячие клавиши, перетаскивание | кнопки и клавиши (через скрипт-мост) и перетаскивание |
+| | DaVinci Resolve **Studio** (macOS, Windows) | DaVinci Resolve **бесплатная** (macOS, Windows) | Linux |
+|---|---|---|---|
+| Как открывается | *Workspace ▸ Workflow Integrations ▸ Cloud Pool* | *Workspace ▸ Scripts ▸ Cloud Pool* | *Workspace ▸ Scripts ▸ Cloud Pool* |
+| Что нужно | только установщик | только установщик (использует Electron, встроенный в Resolve) | [Node.js LTS](https://nodejs.org) |
+| Вставка на таймлайн | кнопки, клавиши, перетаскивание | кнопки, клавиши, перетаскивание | кнопки, клавиши, перетаскивание |
 
 Плагины Workflow Integration Blackmagic поддерживает только в **Resolve Studio** на macOS и Windows
 (рекомендуется Resolve 20.1 или новее — там Electron 36 и асинхронный API). Для бесплатной версии
@@ -81,25 +81,26 @@ Google Фото (то, что телефон сам туда выгружает)
 
 Совет: положите скачанный `client_secret_….json` в папку проекта — установщик подхватит его сам.
 
-### 3а. DaVinci Resolve Studio (macOS / Windows)
+### 3. Запустите установщик
 
-- **Windows**: дважды щёлкните **`Install Cloud Pool (Windows).cmd`** (попросит права администратора).
-- **macOS**: в Терминале `bash scripts/install-macos.sh` (попросит пароль администратора).
+- **Windows**: дважды щёлкните **`Install Cloud Pool (Windows).cmd`**.
+- **macOS**: в Терминале `bash scripts/install-macos.sh`.
 
-Установщик копирует плагин в папку *Workflow Integration Plugins* и берёт `WorkflowIntegration.node`
-из вашей установки Resolve (этот модуль Blackmagic не распространяется вместе с проектом).
-Перезапустите Resolve и откройте **Workspace ▸ Workflow Integrations ▸ Cloud Pool (Google Photos)**.
+Установщик сам определит редакцию Resolve:
 
-### 3б. Бесплатная версия Resolve / Linux
+- **Resolve Studio** — ставит плагин в папку *Workflow Integration Plugins* (попросит права администратора)
+  и берёт `WorkflowIntegration.node` из вашей установки Resolve (этот модуль Blackmagic не распространяется
+  с проектом). Перезапустите Resolve → **Workspace ▸ Workflow Integrations ▸ Cloud Pool (Google Photos)**.
+- **Бесплатная версия** — копирует приложение в вашу папку пользователя и ставит скрипт-мост «Cloud Pool».
+  Окно запускается встроенным в Resolve Electron, Node.js не нужен. Перезапустите Resolve →
+  **Workspace ▸ Scripts ▸ Cloud Pool**: скрипт откроет Cloud Pool и подключит его к Resolve
+  (в строке состояния появится «DaVinci Resolve … · Проект …»). Пока скрипт работает, вставка на таймлайн
+  идёт кнопками и клавишами; перетаскивание мышью работает всегда.
 
-1. Установите [Node.js LTS](https://nodejs.org).
-2. Запустите **`Start Cloud Pool (Windows).cmd`** или **`start-cloud-pool.command`** (macOS/Linux),
-   либо `npm install && npm start` в папке проекта. Первый запуск скачает Electron (~100 МБ).
-3. Cloud Pool сам установит скрипт-мост в Resolve. В Resolve выберите **Workspace ▸ Scripts ▸ Cloud Pool** —
-   в строке состояния Cloud Pool появится «DaVinci Resolve … подключён». Дальше этот же пункт меню
-   будет сам запускать Cloud Pool.
-
-Без скрипта всё тоже работает — просто перетаскивайте скачанные клипы мышью на таймлайн.
+Если установщик сообщит, что встроенный Electron не найден (или у вас **Linux**): установите
+[Node.js LTS](https://nodejs.org) и один раз запустите **`Start Cloud Pool (Windows).cmd`** /
+**`start-cloud-pool.command`** (или `npm install && npm start`). Cloud Pool сам поставит скрипт-мост, и дальше
+пункт *Workspace ▸ Scripts ▸ Cloud Pool* будет открывать его сам.
 
 ### 4. Первый запуск
 
@@ -168,14 +169,16 @@ HEVC без аппаратной поддержки). Клип всё равно
 **Плагина нет в меню Workflow Integrations.** Нужен Resolve **Studio** и перезапуск после установки.
 Проверьте, что в `…/Workflow Integration Plugins/com.cloudpool.googlephotos/` есть `WorkflowIntegration.node`.
 
-**Скрипт «Cloud Pool» не виден в Workspace ▸ Scripts.** Запустите Cloud Pool один раз (он установит скрипт),
-затем перезапустите Resolve. Или нажмите «Установить скрипт в Resolve» в настройках.
+**Скрипт «Cloud Pool» не виден в Workspace ▸ Scripts.** Перезапустите Resolve после установки. Если не помогло —
+нажмите «Установить скрипт в Resolve» в настройках Cloud Pool. Скрипт лежит в
+`…/Blackmagic Design/DaVinci Resolve/(Support/)Fusion/Scripts/Utility/Cloud Pool.lua`.
 
 **Журнал ошибок**: Настройки ▸ О программе ▸ Журнал.
 
 ## Удаление
 
-`Uninstall Cloud Pool (Windows).cmd` или `bash scripts/uninstall-macos.sh`. Скачанные файлы и настройки остаются.
+`Uninstall Cloud Pool (Windows).cmd` или `bash scripts/uninstall-macos.sh` — удаляют плагин, приложение и скрипт.
+Скачанные файлы и настройки остаются.
 
 ## Для разработчиков
 
