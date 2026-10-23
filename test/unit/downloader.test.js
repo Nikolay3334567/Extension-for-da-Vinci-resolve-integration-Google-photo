@@ -196,3 +196,24 @@ test('queue survives a restart', async () => {
     await fake.stop();
   }
 });
+
+test('waits while Google Photos is still processing a video', async () => {
+  const { fake, mgr, dir, small } = await setup();
+  try {
+    let processing = 2;
+    const original = mgr.targetFor;
+    mgr.processingRetryMs = 100;
+    mgr.targetFor = async (key, opts) => {
+      if (processing-- > 0) throw Object.assign(new Error('still processing'), { code: 'PROCESSING' });
+      return original(key, opts);
+    };
+    mgr.enqueue(spec(dir, 'drive:small'));
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(mgr.get('drive:small').state, 'queued');
+    assert.equal(mgr.get('drive:small').errorCode, 'PROCESSING');
+    const file = await mgr.whenDone('drive:small');
+    assert.equal(md5(file), md5(small));
+  } finally {
+    await fake.stop();
+  }
+});

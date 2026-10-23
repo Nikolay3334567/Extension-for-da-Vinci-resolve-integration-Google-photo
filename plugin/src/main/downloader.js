@@ -61,6 +61,7 @@ class DownloadManager extends EventEmitter {
     this.connections = connections;
     this.chunkSize = chunkSize;
     this.retryBaseMs = retryBaseMs;
+    this.processingRetryMs = 30000;
     this.logger = logger;
     this.jobs = new Map();
     this.seq = 0;
@@ -171,6 +172,7 @@ class DownloadManager extends EventEmitter {
     job.state = 'queued';
     job.error = null;
     job.errorCode = null;
+    job.retryAt = 0;
     this._changed(job);
     this._pump();
   }
@@ -214,7 +216,8 @@ class DownloadManager extends EventEmitter {
   _pump() {
     const all = [...this.jobs.values()];
     const active = all.filter((j) => j.state === 'active');
-    const queued = all.filter((j) => j.state === 'queued').sort((a, b) => b.priority - a.priority || a.seq - b.seq);
+    const now = Date.now();
+    const queued = all.filter((j) => j.state === 'queued' && !(j.retryAt > now)).sort((a, b) => b.priority - a.priority || a.seq - b.seq);
     let activeCount = active.length;
     let urgentActive = active.filter((j) => j.priority >= URGENT).length;
     for (const job of queued) {
@@ -290,9 +293,10 @@ class DownloadManager extends EventEmitter {
         job.state = 'queued';
         job.error = err.message;
         job.errorCode = err.code;
+        job.retryAt = Date.now() + this.processingRetryMs;
         this._changed(job);
-        setTimeout(() => this._pump(), 30000).unref?.();
-        return;
+        const timer = setTimeout(() => this._pump(), this.processingRetryMs + 50);
+        if (timer.unref) timer.unref();
       } else {
         job.state = 'error';
         job.error = err.message || String(err);

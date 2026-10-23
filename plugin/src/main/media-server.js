@@ -131,8 +131,15 @@ class MediaServer {
   }
 
   async _thumb(req, res, key, size, signal) {
-    const item = await this.resolveItem(key);
-    const { file } = await this.thumbs.get(item, size, signal);
+    let hit;
+    try {
+      hit = await this.thumbs.get(await this.resolveItem(key), size, signal);
+    } catch (err) {
+      // Offline, signed out or the item left the library: a cached thumbnail is still useful.
+      hit = !isAbortError(err) && (await this.thumbs.getCached(key, size));
+      if (!hit) throw err;
+    }
+    const { file } = hit;
     const buf = await fs.promises.readFile(file);
     if (signal.aborted) return;
     res.writeHead(200, {

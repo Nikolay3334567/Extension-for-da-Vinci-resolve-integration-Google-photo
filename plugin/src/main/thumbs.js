@@ -178,6 +178,21 @@ class ThumbCache {
     return result;
   }
 
+  /** Any cached thumbnail for `key` (used when the item itself can no longer be resolved). */
+  async getCached(key, size) {
+    await this.scanned;
+    const sha = sha1(key);
+    const bucket = this._cachedBucket(sha, bucketFor(size), { allowSmaller: true });
+    return bucket ? this._hit(sha, bucket) : null;
+  }
+
+  /** Path of the best cached thumbnail, synchronously (for drag icons). */
+  peekFile(key) {
+    const sha = sha1(key);
+    const bucket = this._cachedBucket(sha, 256, { allowSmaller: true });
+    return bucket ? this.fileFor(sha, bucket) : null;
+  }
+
   _hit(sha, bucket) {
     const meta = this.index.get(sha).get(bucket);
     meta.t = Date.now();

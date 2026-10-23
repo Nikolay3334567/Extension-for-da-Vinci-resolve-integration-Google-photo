@@ -150,6 +150,9 @@ function pool:ImportMedia(paths)
   local out = {}
   for _, p in ipairs(paths) do
     local media = FAKE_MEDIA[p]
+    if not media and FAKE_ACCEPT_ANY then
+      media = p:lower():match("%.jpe?g$") and { still = true } or { fps = 30, frames = 150, audio = true }
+    end
     if media then
       local it = setmetatable({ path = p, media = media, metadata = {} }, Item)
       table.insert(current.clips, it)

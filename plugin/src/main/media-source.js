@@ -53,7 +53,12 @@ class MediaSources {
   /** URL + suffix used to fetch the full-quality file for download. */
   async downloadTarget(item, { force = false } = {}) {
     if (item.source === 'photos') {
-      if (item.kind === 'video') return { url: await this._photosUrl(item, 'dv', force), headers: await this.auth.authHeaders() };
+      if (item.kind === 'video') {
+        if (item.processing === 'PROCESSING') {
+          throw Object.assign(new Error('Google Photos is still processing this video'), { code: 'PROCESSING' });
+        }
+        return { url: await this._photosUrl(item, 'dv', force), headers: await this.auth.authHeaders() };
+      }
       // HEIC/HEIF stills are converted by Google to full-size JPEG, which Resolve can read.
       const suffix = HEIF.test(item.mimeType) && item.width && item.height ? `w${item.width}-h${item.height}` : 'd';
       return { url: await this._photosUrl(item, suffix, force), headers: await this.auth.authHeaders() };
